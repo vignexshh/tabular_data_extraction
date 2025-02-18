@@ -31,6 +31,6 @@ def csv_to_json(input_file, output_file):
     print(f"Converted {len(json_data)} records to JSON")
 
 # Example usage
-input_csv = '2_ALL INDIA QUOTA AYUSH ROUND-1 ALLOTMENTS.txt'
-output_json = '2_ALL INDIA QUOTA AYUSH ROUND-1 ALLOTMENTS.json'
+input_csv = 'input file path'
+output_json = 'output file path'
 csv_to_json(input_csv, output_json)
