@@ -3,26 +3,23 @@ import camelot
 import re
 
 def detect_table_type(pdf_path):
-    """
-    Detects the majority table type (lattice or stream) in the first two pages of a PDF.
-    Returns 'lattice', 'stream', or None if no tables are found.
-    """
+   
     try:
-        # Extract tables using both lattice and stream methods for the first two pages
+        
         lattice_tables = camelot.read_pdf(pdf_path, pages='1,2', flavor='lattice')
         stream_tables = camelot.read_pdf(pdf_path, pages='1,2', flavor='stream')
 
-        # Count the number of tables detected by each method
+      
         lattice_count = len(lattice_tables)
         stream_count = len(stream_tables)
 
-        # Determine the majority type
+       
         if lattice_count > stream_count:
             return 'lattice'
         elif stream_count > lattice_count:
             return 'stream'
         else:
-            # If equal, default to lattice (or you can choose stream)
+            
             return 'lattice' if lattice_count > 0 else None
     except Exception as e:
         print(f"Error detecting table type in {pdf_path}: {e}")
@@ -30,9 +27,7 @@ def detect_table_type(pdf_path):
 
 
 def extract_tables_from_pdf(pdf_path, table_type):
-    """
-    Extracts tables from a PDF using the specified table type (lattice or stream).
-    """
+    
     try:
         tables = camelot.read_pdf(pdf_path, pages='all', flavor=table_type)
         if not tables:
@@ -45,28 +40,23 @@ def extract_tables_from_pdf(pdf_path, table_type):
 
 
 def save_tables_as_txt(tables, output_path):
-    """
-    Saves extracted tables into a text file with consistent formatting.
-    Ensures that the '+' delimiter is applied correctly for all rows.
-    """
+     
     total_tables = len(tables)
     with open(output_path, 'w', encoding='utf-8') as txt_file:
         for i, table in enumerate(tables):
             progress = (i + 1) / total_tables * 100
             print(f"Processing Table {i + 1}/{total_tables} ({progress:.2f}%)")
             
-            # Ensure consistent formatting for each row
+          
             for row in table.df.itertuples(index=False):
-                # Replace newlines within cells and join with '+'
+              
                 line = ' + '.join(map(lambda cell: str(cell).replace('\n', ' ').strip(), row))
                 txt_file.write(f"{line}\n")
-            txt_file.write("\n")  # Add an extra newline between tables
+            txt_file.write("\n")  
 
 
 def remove_non_numerical_chars_at_start(input_file_path, output_file_path):
-    """
-    Removes non-numerical characters at the start of each line.
-    """
+    
     with open(input_file_path, 'r', encoding='utf-8') as infile, open(output_file_path, 'w', encoding='utf-8') as outfile:
         for line in infile:
             match = re.search(r'\d', line)
@@ -78,9 +68,7 @@ def remove_non_numerical_chars_at_start(input_file_path, output_file_path):
 
 
 def remove_empty_lines(input_file_path, output_file_path):
-    """
-    Removes empty lines from the file.
-    """
+     
     with open(input_file_path, 'r', encoding='utf-8') as infile, open(output_file_path, 'w', encoding='utf-8') as outfile:
         for line in infile:
             if line.strip():
@@ -88,11 +76,7 @@ def remove_empty_lines(input_file_path, output_file_path):
 
 
 def process_directory(input_dir, output_base_dir):
-    """
-    Processes all PDF files in the input directory and its subdirectories.
-    Maintains the same folder structure in the output directories.
-    """
-    # Create base directories for extracted and cleaned data
+    
     extracted_text_dir = os.path.join(output_base_dir, 'extracted')
     cleaned_data_dir = os.path.join(output_base_dir, 'cleaned')
     os.makedirs(extracted_text_dir, exist_ok=True)
@@ -136,11 +120,11 @@ def process_directory(input_dir, output_base_dir):
 
 
 def main():
-    # Specify the input directory containing PDF files
+   
     input_dir = 'main directory input path'  # use [ r'] to specify abosolute paths 
-    output_base_dir = os.path.dirname(input_dir)  # Parent directory of input_dir
+    output_base_dir = os.path.dirname(input_dir)   
 
-    # Process the directory
+  
     process_directory(input_dir, output_base_dir)
 
 
