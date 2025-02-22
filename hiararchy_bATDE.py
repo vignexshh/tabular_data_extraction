@@ -1,3 +1,4 @@
+# this code automatically flavours extraction type based on first 1 to 2 pages, so uniform consistency is required for it decide (stream / lattice / hybrid)
 import os
 import camelot
 import re
