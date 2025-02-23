@@ -1,3 +1,4 @@
+# legacy approach while taking distinct single folder inputs
 import os
 import camelot
 import sys
