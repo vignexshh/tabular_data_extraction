@@ -12,4 +12,5 @@
 ## Usage
 
 Camelot allows flexible extraction tailored to the specific structure and formatting of your PDF. Choose the appropriate mode based on the table's visibility and layout to ensure accurate results.
+Marked for internal tools
 
