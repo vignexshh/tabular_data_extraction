@@ -1,0 +1,372 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox, simpledialog, ttk
+import fitz  # PyMuPDF
+import io
+import csv
+import camelot
+import pandas as pd
+from PIL import Image, ImageTk
+import os
+import tempfile
+import numpy as np
+
+class PDFTableExtractorApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("PDF Table Extractor Pro")
+        self.root.geometry("1200x800")
+        # PDF document variables
+        self.pdf_doc = None
+        self.pdf_path = None
+        self.current_page_num = 0
+        self.total_pages = 0
+        # Column markers and display settings
+        self.column_markers_pdf = []  # Stores column positions in PDF coordinates
+        self.zoom_factor = 1.0
+        self.max_width = 900
+        self.max_height = 700
+        # Extraction settings
+        self.delimiter_options = [",", ";", "\t", "|", " "]
+        self.extraction_methods = ["auto", "lattice", "stream", "text"]
+        # UI setup
+        self.setup_ui()
+        # Initialize state variables
+        self.marking_mode = None
+        self.marking_start = None
+        self.temp_marker = None
+        self.image_on_canvas = None
+        self.photo_img = None
+
+    def setup_ui(self):
+        # Configure main window
+        self.root.grid_rowconfigure(1, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+        # Create frames
+        control_frame = tk.Frame(self.root, bd=2, relief=tk.RIDGE)
+        control_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+        display_frame = tk.Frame(self.root)
+        display_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+        status_frame = tk.Frame(self.root, bd=1, relief=tk.SUNKEN)
+        status_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=5)
+        # Control frame widgets
+        tk.Button(control_frame, text="Load PDF", command=self.load_pdf).pack(side=tk.LEFT, padx=5)
+        nav_frame = tk.Frame(control_frame)
+        nav_frame.pack(side=tk.LEFT, padx=10)
+        tk.Button(nav_frame, text="◄", command=self.prev_page, width=3).pack(side=tk.LEFT)
+        self.page_label = tk.Label(nav_frame, text="Page: 0/0", width=10)
+        self.page_label.pack(side=tk.LEFT)
+        tk.Button(nav_frame, text="►", command=self.next_page, width=3).pack(side=tk.LEFT)
+        tk.Button(nav_frame, text="Go To", command=self.go_to_page, width=5).pack(side=tk.LEFT, padx=5)
+        # Zoom controls
+        zoom_frame = tk.Frame(control_frame)
+        zoom_frame.pack(side=tk.LEFT, padx=10)
+        tk.Button(zoom_frame, text="+", command=self.zoom_in, width=3).pack(side=tk.LEFT)
+        tk.Button(zoom_frame, text="-", command=self.zoom_out, width=3).pack(side=tk.LEFT)
+        tk.Button(zoom_frame, text="Reset", command=self.zoom_reset, width=5).pack(side=tk.LEFT, padx=5)
+        # Column controls
+        col_frame = tk.Frame(control_frame)
+        col_frame.pack(side=tk.LEFT, padx=10)
+        tk.Button(col_frame, text="Add Column", command=lambda: self.set_marking_mode("column")).pack(side=tk.LEFT)
+        tk.Button(col_frame, text="Clear All", command=self.clear_markers).pack(side=tk.LEFT, padx=5)
+        # Extraction controls
+        extract_frame = tk.Frame(control_frame)
+        extract_frame.pack(side=tk.LEFT, padx=10)
+        tk.Button(extract_frame, text="Detect Table", command=self.auto_detect_table).pack(side=tk.LEFT)
+        tk.Button(extract_frame, text="Extract Data", command=self.extract_data).pack(side=tk.LEFT, padx=5)
+        # Settings frame
+        settings_frame = tk.Frame(control_frame)
+        settings_frame.pack(side=tk.RIGHT, padx=10)
+        tk.Label(settings_frame, text="Delimiter:").grid(row=0, column=0, sticky="e")
+        self.delimiter_var = tk.StringVar(value=",")
+        tk.OptionMenu(settings_frame, self.delimiter_var, *self.delimiter_options).grid(row=0, column=1, sticky="w")
+        tk.Label(settings_frame, text="Method:").grid(row=1, column=0, sticky="e")
+        self.method_var = tk.StringVar(value="auto")
+        tk.OptionMenu(settings_frame, self.method_var, *self.extraction_methods).grid(row=1, column=1, sticky="w")
+        # Display frame with canvas and scrollbars
+        self.canvas = tk.Canvas(display_frame, bg="white", width=self.max_width, height=self.max_height)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        v_scroll = tk.Scrollbar(display_frame, orient=tk.VERTICAL, command=self.canvas.yview)
+        v_scroll.grid(row=0, column=1, sticky="ns")
+        h_scroll = tk.Scrollbar(display_frame, orient=tk.HORIZONTAL, command=self.canvas.xview)
+        h_scroll.grid(row=1, column=0, sticky="ew")
+        self.canvas.configure(yscrollcommand=v_scroll.set, xscrollcommand=h_scroll.set)
+        self.canvas.bind("<Configure>", self.on_canvas_configure)
+        # Mouse bindings for column marking
+        self.canvas.bind("<Button-1>", self.on_canvas_click)
+        self.canvas.bind("<B1-Motion>", self.on_canvas_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.on_canvas_release)
+        # Status bar
+        self.status_var = tk.StringVar(value="Ready to load PDF")
+        tk.Label(status_frame, textvariable=self.status_var, anchor="w").pack(fill=tk.X)
+        # Disable controls until PDF is loaded
+        self.set_controls_state(False)
+
+    def set_controls_state(self, enabled):
+        state = tk.NORMAL if enabled else tk.DISABLED
+        widgets = [
+            self.page_label, 
+            *self.root.children['!frame'].children['!frame2'].winfo_children(),
+            *self.root.children['!frame'].children['!frame3'].winfo_children(),
+            *self.root.children['!frame'].children['!frame4'].winfo_children(),
+            *self.root.children['!frame'].children['!frame5'].winfo_children()
+        ]
+        for widget in widgets:
+            try:
+                widget.config(state=state)
+            except:
+                pass
+
+    def load_pdf(self):
+        file_path = filedialog.askopenfilename(filetypes=[("PDF Files", "*.pdf")])
+        if not file_path:
+            return
+        try:
+            self.pdf_doc = fitz.open(file_path)
+            self.pdf_path = file_path
+            self.current_page_num = 0
+            self.total_pages = len(self.pdf_doc)
+            self.column_markers_pdf = []
+            self.update_page_controls()
+            self.render_current_page()
+            self.set_controls_state(True)
+            self.status_var.set(f"Loaded: {os.path.basename(file_path)}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load PDF:\n{str(e)}")
+            self.status_var.set("Failed to load PDF")
+
+    def update_page_controls(self):
+        if self.pdf_doc:
+            self.page_label.config(text=f"Page: {self.current_page_num + 1}/{self.total_pages}")
+            self.status_var.set(f"Displaying page {self.current_page_num + 1} of {self.total_pages}")
+
+    def render_current_page(self):
+        if not self.pdf_doc:
+            return
+        self.canvas.delete("all")
+        page = self.pdf_doc[self.current_page_num]
+        # Render page to image
+        zoom = 2.0 * self.zoom_factor
+        mat = fitz.Matrix(zoom, zoom)
+        pix = page.get_pixmap(matrix=mat)
+        img = Image.open(io.BytesIO(pix.tobytes()))
+        self.photo_img = ImageTk.PhotoImage(img)
+        # Display image on canvas
+        self.image_on_canvas = self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo_img)
+        self.canvas.config(scrollregion=self.canvas.bbox("all"))
+        # Redraw column markers
+        self.redraw_markers()
+
+    def redraw_markers(self):
+        self.canvas.delete("marker")
+        if not self.pdf_doc:
+            return
+        page_width = self.pdf_doc[self.current_page_num].rect.width
+        img_width = self.photo_img.width()
+        for x_pdf in self.column_markers_pdf:
+            x_screen = x_pdf * img_width / page_width
+            self.canvas.create_line(
+                x_screen, 0, x_screen, self.photo_img.height(),
+                fill="red", width=2, tags="marker"
+            )
+
+    def on_canvas_configure(self, event):
+        if hasattr(self, 'image_on_canvas'):
+            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def on_canvas_click(self, event):
+        if self.marking_mode == "column":
+            self.marking_start = event.x
+            self.temp_marker = self.canvas.create_line(
+                event.x, 0, event.x, self.photo_img.height(),
+                fill="blue", width=1, dash=(4, 4)
+            )
+
+    def on_canvas_drag(self, event):
+        if self.marking_mode == "column" and self.temp_marker:
+            self.canvas.coords(self.temp_marker, event.x, 0, event.x, self.photo_img.height())
+
+    def on_canvas_release(self, event):
+        if self.marking_mode == "column" and self.temp_marker:
+            self.canvas.delete(self.temp_marker)
+            self.temp_marker = None
+            if self.marking_start:
+                # Convert screen to PDF coordinates
+                page_width = self.pdf_doc[self.current_page_num].rect.width
+                img_width = self.photo_img.width()
+                x_pdf = event.x * page_width / img_width
+                # Add marker if not too close to existing ones
+                if not any(abs(x - x_pdf) < 5 for x in self.column_markers_pdf):
+                    self.column_markers_pdf.append(x_pdf)
+                    self.column_markers_pdf.sort()
+                    self.redraw_markers()
+        self.marking_mode = None
+        self.marking_start = None
+
+    def set_marking_mode(self, mode):
+        self.marking_mode = mode
+        self.status_var.set("Click on the PDF to mark column positions" if mode == "column" else "")
+
+    def clear_markers(self):
+        self.column_markers_pdf = []
+        self.redraw_markers()
+        self.status_var.set("All column markers cleared")
+
+    def zoom_in(self):
+        self.zoom_factor *= 1.2
+        self.render_current_page()
+
+    def zoom_out(self):
+        if self.zoom_factor > 0.2:
+            self.zoom_factor /= 1.2
+            self.render_current_page()
+
+    def zoom_reset(self):
+        self.zoom_factor = 1.0
+        self.render_current_page()
+
+    def prev_page(self):
+        if self.current_page_num > 0:
+            self.current_page_num -= 1
+            self.update_page_controls()
+            self.render_current_page()
+
+    def next_page(self):
+        if self.current_page_num < self.total_pages - 1:
+            self.current_page_num += 1
+            self.update_page_controls()
+            self.render_current_page()
+
+    def go_to_page(self):
+        page_num = simpledialog.askinteger("Go To Page", f"Enter page number (1-{self.total_pages}):",
+                                         minvalue=1, maxvalue=self.total_pages)
+        if page_num:
+            self.current_page_num = page_num - 1
+            self.update_page_controls()
+            self.render_current_page()
+
+    def auto_detect_table(self):
+        if not self.pdf_doc:
+            return
+        self.status_var.set("Detecting table structure...")
+        self.root.update_idletasks()
+        try:
+            # Use camelot to detect tables
+            page_num = self.current_page_num + 1  # Camelot uses 1-based indexing
+            method = self.method_var.get()
+            tables = camelot.read_pdf(
+                self.pdf_path,
+                pages=str(page_num),
+                flavor="lattice" if method == "auto" else method,
+                line_scale=40
+            )
+            if not tables:
+                messagebox.showinfo("No Table Found", "No table detected on this page")
+                self.status_var.set("No table detected")
+                return
+            # Get column positions
+            table = tables[0]
+            cols = table._pdf_table.cols
+            page_width = self.pdf_doc[self.current_page_num].rect.width
+            # Convert camelot column positions to PDF coordinates
+            self.column_markers_pdf = [table._bbox[0] + col for col in cols[1:-1]]
+            # Add first and last column boundaries if needed
+            if len(self.column_markers_pdf) < 2:
+                self.column_markers_pdf = [0, page_width/3, 2*page_width/3, page_width]
+            else:
+                self.column_markers_pdf = [table._bbox[0]] + self.column_markers_pdf + [table._bbox[2]]
+            self.redraw_markers()
+            self.status_var.set(f"Detected table with {len(cols)-1} columns")
+        except Exception as e:
+            messagebox.showerror("Detection Error", f"Failed to detect table:\n{str(e)}")
+            self.status_var.set("Table detection failed")
+
+    def extract_data(self):
+        if not self.pdf_doc or len(self.column_markers_pdf) < 2:
+            messagebox.showwarning("Warning", "Please mark at least two column boundaries")
+            return
+        output_path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV Files", "*.csv"), ("TSV Files", "*.tsv"), ("All Files", "*.*")]
+        )
+        if not output_path:
+            return
+        try:
+            delimiter = self.delimiter_var.get()
+            method = self.method_var.get()
+            self.status_var.set("Extracting data...")
+            self.root.update_idletasks()
+            # Prepare column boundaries
+            col_bounds = sorted(self.column_markers_pdf)
+            num_cols = len(col_bounds) - 1
+            all_data = []
+            # Process each page
+            for page_idx in range(self.total_pages):
+                self.status_var.set(f"Processing page {page_idx+1}/{self.total_pages}")
+                self.root.update_idletasks()
+                page = self.pdf_doc[page_idx]
+                page_data = []
+                if method in ["auto", "lattice", "stream"]:
+                    try:
+                        # Try camelot extraction first
+                        tables = camelot.read_pdf(
+                            self.pdf_path,
+                            pages=str(page_idx + 1),
+                            flavor="lattice" if method == "auto" else method,
+                            columns=col_bounds,
+                            line_scale=40
+                        )
+                        if tables and len(tables[0].df.columns) == num_cols:
+                            page_data = tables[0].df.values.tolist()
+                    except:
+                        pass
+                if not page_data and method in ["auto", "text"]:
+                    # Fall back to precise text extraction
+                    words = page.get_text("words")
+                    rows = {}
+                    # Group words by row (y-position)
+                    for word in words:
+                        y_pos = round(word[3], 1)  # Bottom y-coordinate
+                        if y_pos not in rows:
+                            rows[y_pos] = []
+                        rows[y_pos].append(word)
+                    # Process each row
+                    for y_pos in sorted(rows.keys()):
+                        row_words = sorted(rows[y_pos], key=lambda w: w[0])
+                        row = [''] * num_cols
+                        current_col = 0
+                        for word in row_words:
+                            word_center = (word[0] + word[2]) / 2
+                            # Find correct column
+                            while current_col < num_cols and word_center > col_bounds[current_col + 1]:
+                                current_col += 1
+                            if current_col < num_cols:
+                                if row[current_col]:
+                                    row[current_col] += " "
+                                row[current_col] += word[4]
+                        if any(cell.strip() for cell in row):
+                            page_data.append(row)
+                if page_data:
+                    all_data.extend(page_data)
+                    # Add page separator if not last page
+                    if page_idx < self.total_pages - 1:
+                        all_data.append([f"--- Page {page_idx+1} End ---"])
+            # Save extracted data
+            if all_data:
+                df = pd.DataFrame(all_data)
+                df.to_csv(output_path, index=False, header=False, sep=delimiter)
+                self.status_var.set(f"Data saved to {os.path.basename(output_path)}")
+                messagebox.showinfo("Success", f"Extracted {len(all_data)} rows to:\n{output_path}")
+            else:
+                self.status_var.set("No data extracted")
+                messagebox.showwarning("Warning", "No table data found in document")
+        except Exception as e:
+            messagebox.showerror("Extraction Error", f"Failed to extract data:\n{str(e)}")
+            self.status_var.set("Extraction failed")
+
+def main():
+    root = tk.Tk()
+    app = PDFTableExtractorApp(root)
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()
